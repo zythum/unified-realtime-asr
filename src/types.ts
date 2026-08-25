@@ -15,8 +15,10 @@ export interface Transcript {
   text: string;
   /** false = interim/partial, true = sentence-final or stream-final. */
   isFinal: boolean;
-  /** Segment / sentence index, when the vendor provides one. */
+  /** 1-based 句/段序号，由本库统一分配，便于按句编号或换行。 */
   index?: number;
+  /** Provider 提供的稳定句级 id；同一句的 partial 与其后的 final 共用同一 id。 */
+  id?: string;
   /** Start offset in milliseconds, when available. */
   startTime?: number;
   /** End offset in milliseconds, when available. */
@@ -96,8 +98,8 @@ export interface VolcengineConfig {
   options?: RealtimeASROptions;
 }
 
-export interface OpenAIRealtimeConfig {
-  provider: "openai-realtime";
+export interface OpenAIConfig {
+  provider: "openai";
   apiKey: string;
   url?: string;
   options?: RealtimeASROptions;
@@ -108,7 +110,7 @@ export interface DashScopeConfig {
   provider: "dashscope";
   /** DashScope API Key（sk-...），与调用千问大模型同一把。 */
   apiKey: string;
-  /** 模型名。默认 paraformer-realtime-v2（百炼 Paraformer 实时语音识别 WebSocket 接口）。 */
+  /** 模型名。默认 fun-asr-flash-8k-realtime（百炼 Fun-ASR 实时语音识别 WebSocket 接口）。 */
   model?: string;
   /** 业务空间专属域名的工作空间 ID；不填则用旧域名 dashscope.aliyuncs.com。 */
   workspaceId?: string;
@@ -120,4 +122,4 @@ export interface DashScopeConfig {
   options?: RealtimeASROptions;
 }
 
-export type ASRConfig = VolcengineConfig | OpenAIRealtimeConfig | DashScopeConfig;
+export type ASRConfig = VolcengineConfig | OpenAIConfig | DashScopeConfig;

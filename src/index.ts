@@ -1,5 +1,5 @@
 import { DashScopeRealtimeASRClient } from "./adapters/dashscope.js";
-import { OpenAIRealtimeASRClient } from "./adapters/openai.js";
+import { OpenAIASRClient } from "./adapters/openai.js";
 import { VolcengineASRClient } from "./adapters/volcengine.js";
 import { BaseRealtimeASRClient } from "./core/base-client.js";
 import type { ASRConfig } from "./types.js";
@@ -13,18 +13,12 @@ export type RealtimeASRClient = BaseRealtimeASRClient;
  */
 export function createASRClient(config: ASRConfig): RealtimeASRClient {
   switch (config.provider) {
-    case "openai-realtime":
-      return new OpenAIRealtimeASRClient({ apiKey: config.apiKey }, config.options);
+    case "openai":
+      return new OpenAIASRClient(config);
     case "dashscope":
       return new DashScopeRealtimeASRClient(config);
     case "volcengine":
-      return new VolcengineASRClient({
-        apiKey: config.apiKey,
-        resourceId: config.resourceId,
-        appId: config.appId,
-        url: config.url,
-        options: config.options,
-      });
+      return new VolcengineASRClient(config);
     default: {
       const _exhaustive: never = config;
       throw new Error(`Unknown provider: ${JSON.stringify(_exhaustive)}`);
@@ -36,7 +30,7 @@ export * from "./types.js";
 export { BaseRealtimeASRClient } from "./core/base-client.js";
 export { TypedEmitter } from "./core/typed-emitter.js";
 export { ASRError, ASRConnectionError, ASRAuthError, ASRProtocolError } from "./core/errors.js";
-export { OpenAIRealtimeASRClient } from "./adapters/openai.js";
+export { OpenAIASRClient } from "./adapters/openai.js";
 export { DashScopeRealtimeASRClient } from "./adapters/dashscope.js";
 export { VolcengineASRClient } from "./adapters/volcengine.js";
 export type { RealtimeMessage } from "./adapters/openai.js";

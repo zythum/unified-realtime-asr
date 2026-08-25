@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>unified-realtime-asr · Web 示例</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        font:
+          15px/1.6 system-ui,
+          sans-serif;
+        max-width: 720px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0;
+      }
+      #status {
+        font-size: 13px;
+        color: #888;
+      }
+      .controls {
+        margin: 1rem 0;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      label {
+        font-size: 14px;
+        color: #555;
+      }
+      select {
+        padding: 7px 10px;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        font-size: 14px;
+        background: inherit;
+        color: inherit;
+      }
+      button {
+        padding: 8px 16px;
+        border: 0;
+        border-radius: 8px;
+        background: #2563eb;
+        color: #fff;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      button.stop {
+        background: #dc2626;
+      }
+      #transcript {
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        padding: 12px;
+        min-height: 240px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .partial {
+        color: #555;
+      }
+      .final {
+        color: inherit;
+      }
+      .speaker {
+        font-weight: 700;
+        color: #2563eb;
+        margin-right: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>实时语音识别 · Web 示例</h1>
+      <span id="status">未连接</span>
+    </header>
+
+    <div class="controls">
+      <label for="provider">识别引擎</label>
+      <select id="provider">
+        <option value="dashscope">阿里百炼 DashScope</option>
+        <option value="volcengine">火山引擎 Volcengine</option>
+        <option value="openai">OpenAI Realtime</option>
+      </select>
+      <button id="start">开始</button>
+      <button id="stop" class="stop" disabled>停止</button>
+    </div>
+
+    <div id="transcript"></div>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const startBtn = document.getElementById("start");
+      const stopBtn = document.getElementById("stop");
+      const providerSel = document.getElementById("provider");
+      const transcriptEl = document.getElementById("transcript");
+
+      let ws = null;
+      let audioCtx = null;
+      let stream = null;
+      let source = null;
+      let processor = null;
+      let mute = null;
+      let starting = false;
+      let sessionGeneration = 0;
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+      }
+
+      // 同一句（同 id）的 partial 与 final 在同一行「原地更新」：
+      //   - 拿到某 id 的首条结果就建一行（正在输入，灰色）；
+      //   - 同 id 的后续结果（含 final）只更新该行文本，不新增行；
+      //   - 当下一个 id 的结果到来（说明上一句已结束），上一行冻结为定稿（黑色）。
+      let liveId = null;
+
+      function commitIfStale(msg) {
+        if (liveId !== null && msg.id && msg.id !== liveId) {
+          const prev = transcriptEl.querySelector('[data-id="' + liveId + '"]');
+          if (prev) prev.classList.replace("partial", "final");
+          liveId = null;
+        }
+      }
+
+      function renderTranscript(msg) {
+        commitIfStale(msg);
+        let line = msg.id ? transcriptEl.querySelector('[data-id="' + msg.id + '"]') : null;
+        if (!line) {
+          line = document.createElement("span");
+          if (msg.id) line.dataset.id = msg.id;
+          transcriptEl.appendChild(line);
+        }
+        line.className = msg.isFinal ? "final" : "partial";
+        line.textContent = "";
+        if (msg.speaker) {
+          const sp = document.createElement("span");
+          sp.className = "speaker";
+          sp.textContent = "[" + msg.speaker + "] ";
+          line.appendChild(sp);
+        }
+        line.appendChild(document.createTextNode(msg.text));
+        if (msg.id) liveId = msg.id;
+        transcriptEl.scrollTop = transcriptEl.scrollHeight;
+      }
+
+      ws = new WebSocket(
+        (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws",
+      );
+      ws.binaryType = "arraybuffer";
+
+      ws.onopen = () => setStatus("已连接，选择引擎后点「开始」");
+      ws.onclose = () => {
+        setStatus("连接已关闭");
+        stop();
+      };
+      ws.onerror = () => setStatus("连接错误");
+      ws.onmessage = (ev) => {
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "ready") setStatus("识别中（" + msg.provider + "）");
+        else if (msg.type === "transcript") renderTranscript(msg);
+        else if (msg.type === "error") setStatus("错误：" + msg.message);
+        else if (msg.type === "asr-close") setStatus("识别服务已关闭");
+      };
+
+      async function start() {
+        if (starting) return;
+        if (ws.readyState !== WebSocket.OPEN) {
+          setStatus("WebSocket 尚未连接");
+          return;
+        }
+
+        const generation = ++sessionGeneration;
+        const provider = providerSel.value;
+        starting = true;
+        startBtn.disabled = true;
+        providerSel.disabled = true;
+
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true },
+          });
+          if (generation !== sessionGeneration || ws.readyState !== WebSocket.OPEN) {
+            throw new Error("WebSocket 已关闭");
+          }
+        } catch (err) {
+          if (stream) stream.getTracks().forEach((t) => t.stop());
+          stream = null;
+          setStatus("无法启动录音：" + err.message);
+          starting = false;
+          providerSel.disabled = false;
+          startBtn.disabled = false;
+          return;
+        }
+
+        try {
+          // 新会话：清空上一轮，并通知服务端用所选引擎建连。
+          transcriptEl.textContent = "";
+          liveId = null;
+          ws.send(JSON.stringify({ type: "config", provider }));
+          setStatus("正在连接识别服务…");
+
+          // 请求 16k 采样率；浏览器会把麦克风输入重采样到该速率。
+          // 各厂商实时 ASR 默认期望 16k/16-bit/mono PCM。
+          audioCtx = new AudioContext({ sampleRate: 16000 });
+          source = audioCtx.createMediaStreamSource(stream);
+          // ScriptProcessor 已废弃但仍是最简洁的采集方式，示例够用。
+          processor = audioCtx.createScriptProcessor(4096, 1, 1);
+          processor.onaudioprocess = (e) => {
+            const input = e.inputBuffer.getChannelData(0); // Float32 @ 16k
+            const pcm = new Int16Array(input.length);
+            for (let i = 0; i < input.length; i++) {
+              const s = Math.max(-1, Math.min(1, input[i]));
+              pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            }
+            if (ws.readyState === WebSocket.OPEN) ws.send(pcm.buffer);
+          };
+          source.connect(processor);
+          // ScriptProcessor 需要接入输出链路才会持续触发，但不能把麦克风回放给用户。
+          mute = audioCtx.createGain();
+          mute.gain.value = 0;
+          processor.connect(mute);
+          mute.connect(audioCtx.destination);
+
+          starting = false;
+          stopBtn.disabled = false;
+        } catch (err) {
+          stop();
+          setStatus("无法启动录音：" + err.message);
+        }
+      }
+
+      function stop() {
+        sessionGeneration += 1;
+        starting = false;
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "stop" }));
+        try {
+          source && source.disconnect();
+        } catch {}
+        try {
+          processor && processor.disconnect();
+        } catch {}
+        try {
+          mute && mute.disconnect();
+        } catch {}
+        if (stream) stream.getTracks().forEach((t) => t.stop());
+        if (audioCtx) audioCtx.close().catch(() => {});
+        source = processor = mute = stream = audioCtx = null;
+        providerSel.disabled = false;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+      }
+
+      startBtn.addEventListener("click", start);
+      stopBtn.addEventListener("click", stop);
+    </script>
+  </body>
+</html>

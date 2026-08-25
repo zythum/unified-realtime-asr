@@ -3,25 +3,30 @@ import { gzipSync, gunzipSync } from "node:zlib";
 import { randomUUID } from "node:crypto";
 import { BaseRealtimeASRClient } from "../core/base-client.js";
 import { ASRError, ASRConnectionError, ASRProtocolError } from "../core/errors.js";
-import type { RealtimeASROptions } from "../types.js";
-/* -------------------------------------------------------------------------- */
-/* 火山引擎「双向流式语音识别 WebSocket」(doc 2630027) —— 私有二进制帧协议     */
-/*                                                                            */
-/* 与 TTS「双向流式-V3」(doc 1329505) 共用同一套 WebSocket 二进制帧协议，     */
-/* 鉴权走新版控制台的 X-Api-Key（不再是旧版 NLS 的 HMAC token）。             */
-/*                                                                            */
-/* 帧结构（大端）：                                                           */
-/*   byte0 : (protocol_version=1 << 4) | (header_size=1)        => 0x11      */
-/*   byte1 : (message_type << 4) | message_type_specific_flags                */
-/*   byte2 : (serialization << 4) | compression_method                       */
-/*           serialization: 0=raw(音频) 1=JSON(文本)                         */
-/*           compression : 0=none       1=gzip                               */
-/*   byte3 : reserved (0)                                                      */
-/*   [可选] event number    (4B, 仅 WITH_EVENT 标志位时)                      */
-/*   [可选] sequence number  (4B, 有符号, 仅 WITH_SEQUENCE 标志位时)          */
-/*   payload size           (4B, uint32 BE)                                   */
-/*   payload                (gzip(JSON) 或 gzip(raw pcm))                     */
-/* -------------------------------------------------------------------------- */
+import type { VolcengineConfig } from "../types.js";
+/**
+ * 火山引擎双向流式语音识别 WebSocket 协议
+ *
+ * 参考文档：
+ * - 双向流式语音识别：2630027
+ * - 双向流式 TTS V3：1329505（共用同一套二进制帧格式）
+ *
+ * 本协议使用私有二进制帧和新版控制台的 X-Api-Key 鉴权，
+ * 不使用旧版 NLS 的 HMAC token。
+ *
+ * 帧格式采用大端序：
+ * - byte0：protocol_version（4bit）+ header_size（4bit）
+ * - byte1：message_type（4bit）+ message_type_specific_flags（4bit）
+ * - byte2：serialization（4bit）+ compression_method（4bit）
+ * - byte3：保留字段
+ * - 可选 event number：WITH_EVENT 标志位存在时，4 字节
+ * - 可选 sequence number：WITH_SEQUENCE 标志位存在时，4 字节有符号整数
+ * - payload size：4 字节无符号大端整数
+ * - payload：gzip 压缩后的 JSON 或原始 PCM 数据
+ *
+ * serialization：0 = raw（音频），1 = JSON（文本）
+ * compression：0 = 不压缩，1 = gzip
+ */
 
 const PROTOCOL_VERSION = 0b0001;
 const HEADER_SIZE = 0b0001; // 单位：4 字节
@@ -123,22 +128,10 @@ function resolveUrl(_resourceId: string, explicit?: string): string {
   return explicit ?? BIGASR_URL;
 }
 
-export interface VolcengineClientOptions {
-  /** 新版控制台 API Key，作为 X-Api-Key。 */
-  apiKey: string;
-  /** X-Api-Resource-Id，决定模型版本与计费。默认 2.0 小时版。 */
-  resourceId?: string;
-  /** 可选的应用标识，仅在某些后端组合下需要。 */
-  appId?: string;
-  /** 覆盖默认 WebSocket 端点。 */
-  url?: string;
-  options?: RealtimeASROptions;
-}
-
 /**
  * 火山引擎双向流式语音识别客户端（私有二进制协议，非 OpenAI-Realtime 风格）。
  *
- * 按「私有协议不该塞进 OpenAIRealtimeASRClient 引擎」的划分，这里是一个
+ * 按「私有协议不该塞进 OpenAIASRClient 引擎」的划分，这里是一个
  * 独立的 {@link BaseRealtimeASRClient} 子类，直接实现 V3 帧编解码。
  */
 export class VolcengineASRClient extends BaseRealtimeASRClient {
@@ -147,13 +140,19 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
   private readonly resourceId: string;
   private readonly appId?: string;
   private readonly url: string;
+  /** 已作为 final 发出的分句 ID，避免服务端 final 与本地兜底 final 重复。 */
+  private finalizedUtteranceIds = new Set<string>();
+  /** 已作为 final 发出的最大分句序号（1-based），用于 fallback 分配序号。 */
+  private emittedUtterances = 0;
+  /** 最近一次 partial 对应的「当前活体句」，用于在会话结束时补发一条 final（兜底）。 */
+  private pendingFinal: { id: string; index: number; text: string; speaker?: string } | null = null;
 
-  constructor(opts: VolcengineClientOptions) {
-    super(opts.options);
-    this.apiKey = opts.apiKey;
-    this.resourceId = opts.resourceId ?? DEFAULT_RESOURCE_ID;
-    this.appId = opts.appId;
-    this.url = resolveUrl(this.resourceId, opts.url);
+  constructor(config: VolcengineConfig) {
+    super(config.options);
+    this.apiKey = config.apiKey;
+    this.resourceId = config.resourceId ?? DEFAULT_RESOURCE_ID;
+    this.appId = config.appId;
+    this.url = resolveUrl(this.resourceId, config.url);
   }
 
   get provider(): string {
@@ -171,6 +170,9 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
     if (this.appId) headers["X-Api-App-Id"] = this.appId;
 
     this.ws = new WebSocket(this.url, { headers });
+    this.finalizedUtteranceIds.clear(); // 新会话，分句 final 去重状态归零
+    this.emittedUtterances = 0; // 新会话，分句计数归零
+    this.pendingFinal = null; // 新会话，清掉上一会话遗留的尾句兜底
 
     await new Promise<void>((resolve, reject) => {
       const ws = this.ws;
@@ -216,12 +218,10 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
       enable_itn: opts.enableConfusion ?? true,
       enable_punc: opts.punctuation ?? true,
       enable_ddc: false,
-      show_utterances: true, // 返回分句信息（调用方如需按句拆分可选）
-      result_type: "full",
+      show_utterances: true, // 必须：utterances[] 含当前活体句与已定稿句（definite 标记），用于分句
+      result_type: "full", // 该端点下 result.text 即「当前句」活体文本，直接作为 partial；定稿句由 utterances 的 definite 标记识别
       // 说话人聚类分离：仅当 language 为空或 zh-CN（本适配器默认即如此）时可用。
-      ...(opts.speakerDiarization
-        ? { enable_speaker_info: true, ssd_version: "200" }
-        : {}),
+      ...(opts.speakerDiarization ? { enable_speaker_info: true, ssd_version: "200" } : {}),
       ...opts.extra,
     };
     const payload = {
@@ -248,22 +248,33 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
     ws.send(frameWith(compressed, AUDIO_ONLY_REQUEST, 0, SER_RAW, COMP_GZIP));
   }
 
-  // 适配器只负责协议：连、推音频、转发结果。结束/收尾（排空、补 final）由调用方决定，
-  // 因此 closeImpl 仅做最小关闭并等待底层连接断开。
+  // 适配器负责协议：连、推音频、按 utterances 分句转发结果（已完成分句发 final，
+  // 当前句发 partial）。closeImpl 仅做最小关闭并等待底层连接断开；调用方仍可在
+  // 关闭前保留连接一段时间，以兜底捕获最后一句话的定稿（见 examples/node/basic.ts）。
   protected async closeImpl(): Promise<void> {
     const ws = this.ws;
     if (!ws) return;
-    try {
-      ws.close(1000);
-    } catch {
-      /* ignore */
-    }
+    // 先补发尾句 final（若服务端未主动定稿），再关闭连接。
+    this.flushPendingFinal();
+
     await new Promise<void>((resolve) => {
+      if (ws.readyState === WebSocket.CLOSED) {
+        resolve();
+        return;
+      }
       const timer = setTimeout(resolve, 4000); // 兜底：等服务端回关
       ws.once("close", () => {
         clearTimeout(timer);
         resolve();
       });
+      try {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close(1000);
+        }
+      } catch {
+        clearTimeout(timer);
+        resolve();
+      }
     });
   }
 
@@ -316,35 +327,94 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
       );
       return;
     }
-    // 仅转发识别文本为 partial。结束判定与 final 收尾交给调用方（见 examples/basic.ts）。
-    const text: string | undefined =
-      typeof body?.result?.text === "string" ? body.result.text : undefined;
-    if (text) {
-      const speaker = this.extractSpeaker(body.result);
+    const result = body?.result;
+    if (!result || typeof result !== "object") return;
+
+    const utts: any[] = Array.isArray(result.utterances) ? result.utterances : [];
+    // 是否定稿：火山引擎用 definite（部分版本字段名 def）。
+    const isDefinite = (u: any): boolean =>
+      u?.definite === true || u?.def === true || u?.definite === 1 || u?.def === 1;
+
+    // 1) 已定稿分句：utterances 中 definite 的为「已完成句」，逐条发 final（每个只发一次）。
+    for (let i = 0; i < utts.length; i++) {
+      const u = utts[i];
+      if (!isDefinite(u)) continue;
+      const index = i + 1;
+      const id = `u${index}`;
+      if (this.finalizedUtteranceIds.has(id)) continue;
+
+      const speaker = utteranceSpeaker(u);
+      this.finalizedUtteranceIds.add(id);
+      this.emittedUtterances = Math.max(this.emittedUtterances, index);
       this.emitTranscript({
-        text,
-        isFinal: false,
+        text: String(u?.text ?? ""),
+        isFinal: true,
+        id,
+        index,
         ...(speaker !== undefined ? { speaker } : {}),
         raw: body,
       });
+      if (this.pendingFinal?.id === id) this.pendingFinal = null;
+    }
+
+    // 2) 当前正在识别的句：取最后一个 non-definite 分句。
+    //    只有 utterances 完全缺失时才使用 result.text，避免 all-definite 响应制造伪造的下一句。
+    const liveIdx = utts.reduce((acc, u, idx) => (isDefinite(u) ? acc : idx), -1);
+    let partialText: string | null = null;
+    if (liveIdx >= 0) partialText = String(utts[liveIdx]?.text ?? "");
+    else if (utts.length === 0 && typeof result.text === "string" && result.text.length > 0) {
+      partialText = result.text;
+    }
+
+    if (partialText && partialText.trim().length > 0) {
+      const index = liveIdx >= 0 ? liveIdx + 1 : this.emittedUtterances + 1;
+      const id = `u${index}`;
+      const speaker = liveIdx >= 0 ? utteranceSpeaker(utts[liveIdx]) : resultSpeaker(result);
+      this.emitTranscript({
+        text: partialText,
+        isFinal: false,
+        id,
+        index,
+        ...(speaker !== undefined ? { speaker } : {}),
+        raw: body,
+      });
+      // 记下当前活体句，便于会话结束时补发 final。
+      this.pendingFinal = { id, index, text: partialText, ...(speaker ? { speaker } : {}) };
     }
   }
 
-  /**
-   * 提取说话人标签。开启 `enable_speaker_info` 后，火山引擎在 `result` 顶层或
-   * 每个 `utterances[]` 上返回 `speaker`（字符串，如 "1"）。多路径读取以兼容
-   * 不同版本响应结构。
-   */
-  private extractSpeaker(result: any): string | undefined {
-    if (!result || typeof result !== "object") return undefined;
-    if (typeof result.speaker === "string") return result.speaker;
-    const utts = result.utterances;
-    if (Array.isArray(utts) && utts.length) {
-      const last = utts[utts.length - 1];
-      if (last && typeof last.speaker === "string") return last.speaker;
-    }
-    return undefined;
+  /** 会话结束时，对尚未被服务端正式定稿的最后一句活体句补发 final。 */
+  private flushPendingFinal(): void {
+    const p = this.pendingFinal;
+    if (!p || this.finalizedUtteranceIds.has(p.id)) return;
+    this.pendingFinal = null;
+    this.finalizedUtteranceIds.add(p.id);
+    this.emittedUtterances = Math.max(this.emittedUtterances, p.index);
+    this.emitTranscript({
+      text: p.text,
+      isFinal: true,
+      id: p.id,
+      index: p.index,
+      ...(p.speaker !== undefined ? { speaker: p.speaker } : {}),
+      raw: null,
+    });
   }
+}
+
+/** 从单条 utterance 提取说话人标签（开启 enable_speaker_info 后）。兼容 speaker / additions.speaker_id。 */
+function utteranceSpeaker(u: any): string | undefined {
+  if (!u || typeof u !== "object") return undefined;
+  if (typeof u.speaker === "string") return u.speaker;
+  const sid = u?.additions?.speaker_id;
+  if (typeof sid === "string") return sid;
+  return undefined;
+}
+
+function resultSpeaker(result: any): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  if (typeof result.speaker === "string") return result.speaker;
+  const sid = result?.additions?.speaker_id;
+  return typeof sid === "string" ? sid : undefined;
 }
 
 function toBuffer(data: WebSocket.RawData): Buffer {

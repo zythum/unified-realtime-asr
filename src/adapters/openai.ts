@@ -2,13 +2,13 @@ import WebSocket from "ws";
 import { randomUUID } from "node:crypto";
 import { BaseRealtimeASRClient } from "../core/base-client.js";
 import { ASRError, ASRProtocolError } from "../core/errors.js";
-import type { RealtimeASROptions } from "../types.js";
+import type { OpenAIConfig, RealtimeASROptions } from "../types.js";
 
 export type RealtimeMessage =
   | { kind: "ignore" }
   | { kind: "start" }
-  | { kind: "partial"; text: string }
-  | { kind: "final"; text: string }
+  | { kind: "partial"; text: string; id?: string; index?: number }
+  | { kind: "final"; text: string; id?: string; index?: number }
   | { kind: "error"; message: string };
 
 /**
@@ -23,7 +23,7 @@ export type RealtimeMessage =
  * transcription_sessions 这种只听写不回嘴的形态，因此不属于本引擎。
  * DashScope（Paraformer）、Volcengine 是另一套私有/独立协议，也不继承本类。
  */
-export class OpenAIRealtimeASRClient extends BaseRealtimeASRClient {
+export class OpenAIASRClient extends BaseRealtimeASRClient {
   /** Base WebSocket URL（auth 走 Bearer 头）。 */
   protected url = "wss://api.openai.com/v1/realtime/transcription_sessions?intent=transcription";
   protected authHeaderName = "Authorization";
@@ -39,35 +39,31 @@ export class OpenAIRealtimeASRClient extends BaseRealtimeASRClient {
   private taskId = "";
   private started = false;
   private audioBuffer: Uint8Array[] = [];
-  private auth: { apiKey: string };
-  private urlOverride?: string;
-  private extraHeaders: Record<string, string>;
+  private apiKey: string;
+  /** item_id -> 1-based 句序号，用于 Transcript.index。 */
+  private itemIndex = new Map<string, number>();
+  private itemSeq = 0;
 
-  constructor(
-    auth: { apiKey: string },
-    options: RealtimeASROptions = {},
-    urlOverride?: string,
-    extraHeaders: Record<string, string> = {},
-  ) {
-    super(options);
-    this.auth = auth;
-    this.urlOverride = urlOverride;
-    this.extraHeaders = extraHeaders;
+  constructor(config: OpenAIConfig) {
+    super(config.options);
+    this.apiKey = config.apiKey;
+    this.url = config.url ?? this.url;
   }
 
   get provider(): string {
-    return "openai-realtime";
+    return "openai";
   }
 
   protected async connectImpl(): Promise<void> {
-    const headers: Record<string, string> = { ...this.extraHeaders };
-    headers[this.authHeaderName] = `${this.apiKeyPrefix}${this.auth.apiKey}`;
-    const url = this.urlOverride ?? this.url;
+    const headers: Record<string, string> = {};
+    headers[this.authHeaderName] = `${this.apiKeyPrefix}${this.apiKey}`;
 
     this.taskId = randomUUID();
     this.started = !this.gateAudioOnStart;
     this.audioBuffer = [];
-    this.ws = new WebSocket(url, { headers });
+    this.itemIndex.clear();
+    this.itemSeq = 0;
+    this.ws = new WebSocket(this.url, { headers });
 
     await new Promise<void>((resolve, reject) => {
       if (!this.ws) return reject(new ASRError("WebSocket uninitialized"));
@@ -102,10 +98,22 @@ export class OpenAIRealtimeASRClient extends BaseRealtimeASRClient {
         }
         break;
       case "partial":
-        this.emitTranscript({ text: r.text, isFinal: false, raw: msg });
+        this.emitTranscript({
+          text: r.text,
+          isFinal: false,
+          ...(r.id ? { id: r.id } : {}),
+          ...(r.index !== undefined ? { index: r.index } : {}),
+          raw: msg,
+        });
         break;
       case "final":
-        this.emitTranscript({ text: r.text, isFinal: true, raw: msg });
+        this.emitTranscript({
+          text: r.text,
+          isFinal: true,
+          ...(r.id ? { id: r.id } : {}),
+          ...(r.index !== undefined ? { index: r.index } : {}),
+          raw: msg,
+        });
         break;
       case "error":
         this.emit("error", new ASRProtocolError(r.message));
@@ -164,11 +172,32 @@ export class OpenAIRealtimeASRClient extends BaseRealtimeASRClient {
     const t: string | undefined = msg?.type;
     if (t === "session.created" || t === "session.updated") return { kind: "start" };
     if (t === "conversation.item.input_audio_transcription.delta")
-      return { kind: "partial", text: String(msg?.delta ?? "") };
+      return {
+        kind: "partial",
+        text: String(msg?.delta ?? ""),
+        id: msg?.item_id,
+        index: msg?.item_id ? this.indexForItem(msg.item_id) : undefined,
+      };
     if (t === "conversation.item.input_audio_transcription.completed")
-      return { kind: "final", text: String(msg?.transcript ?? "") };
+      return {
+        kind: "final",
+        text: String(msg?.transcript ?? ""),
+        id: msg?.item_id,
+        index: msg?.item_id ? this.indexForItem(msg.item_id) : undefined,
+      };
     if (t === "error")
       return { kind: "error", message: String(msg?.error?.message ?? "realtime error") };
     return { kind: "ignore" };
+  }
+
+  /** 给每个 item_id 分配一个稳定的 1-based 句序号（首次见到时 +1）。 */
+  private indexForItem(itemId: string): number {
+    let idx = this.itemIndex.get(itemId);
+    if (idx === undefined) {
+      this.itemSeq += 1;
+      idx = this.itemSeq;
+      this.itemIndex.set(itemId, idx);
+    }
+    return idx;
   }
 }

@@ -2,13 +2,13 @@ import WebSocket from "ws";
 import { randomUUID } from "node:crypto";
 import { BaseRealtimeASRClient } from "../core/base-client.js";
 import { ASRError, ASRProtocolError } from "../core/errors.js";
-import type { RealtimeASROptions } from "../types.js";
+import type { DashScopeConfig } from "../types.js";
 
 /**
  * 阿里百炼 / DashScope（千问 Fun-ASR / Qwen-ASR）。
  *
  * 与 OpenAI 同族不同协议：发裸二进制 PCM 帧、消息信封为 {header,payload} 嵌套、
- * 且必须等 task-started 才能推音频。因此不继承 OpenAIRealtimeASRClient，而是基于
+ * 且必须等 task-started 才能推音频。因此不继承 OpenAIASRClient，而是基于
  * BaseRealtimeASRClient 独立实现（与 Volcengine 的「独立私有协议」取向一致）。
  */
 export class DashScopeRealtimeASRClient extends BaseRealtimeASRClient {
@@ -17,19 +17,16 @@ export class DashScopeRealtimeASRClient extends BaseRealtimeASRClient {
   private started = false;
   private audioBuffer: Uint8Array[] = [];
   private finishResolve?: () => void;
+  /** 当前句的 id（partial 与 final 同 id）。null 表示下一句尚未开始。 */
+  private currentSentenceId: string | null = null;
+  /** 当前句的 1-based 序号，与 id 的数字部分一致，用于 Transcript.index。 */
+  private currentSentenceIndex = 0;
+  private sentenceSeq = 0;
   private apiKey: string;
   private url: string;
   private headers: Record<string, string>;
 
-  constructor(config: {
-    apiKey: string;
-    model?: string;
-    workspaceId?: string;
-    region?: "cn-beijing" | "ap-southeast-1";
-    workspace?: string;
-    url?: string;
-    options?: RealtimeASROptions;
-  }) {
+  constructor(config: DashScopeConfig) {
     const options = {
       ...config.options,
       transcriptionModel: config.model ?? config.options?.transcriptionModel,
@@ -52,6 +49,9 @@ export class DashScopeRealtimeASRClient extends BaseRealtimeASRClient {
     this.taskId = randomUUID();
     this.started = false;
     this.audioBuffer = [];
+    this.currentSentenceId = null;
+    this.currentSentenceIndex = 0;
+    this.sentenceSeq = 0;
     this.ws = new WebSocket(this.url, { headers });
 
     await new Promise<void>((resolve, reject) => {
@@ -84,9 +84,11 @@ export class DashScopeRealtimeASRClient extends BaseRealtimeASRClient {
         task_group: "audio",
         task: "asr",
         function: "recognition",
-        // 百炼「Paraformer 实时语音识别」WebSocket 接口的模型名为 paraformer-realtime-v2。
-        // （qwen-audio-* 属于另一套非 WebSocket 接口，用在此处会导致任务空跑、无识别结果。）
-        model: opts.transcriptionModel ?? "paraformer-realtime-v2",
+        // 默认模型为 fun-asr-flash-8k-realtime；model 也可经 options.transcriptionModel
+        // 或 DashScopeConfig.model 覆盖。空串/空白视为未设置，回落到默认。
+        model:
+          (opts.transcriptionModel && opts.transcriptionModel.trim()) ||
+          "fun-asr-flash-8k-realtime",
         parameters,
         input: {},
       },
@@ -110,11 +112,29 @@ export class DashScopeRealtimeASRClient extends BaseRealtimeASRClient {
     if (event === "result-generated") {
       const s = msg?.payload?.output?.sentence;
       if (!s || s.heartbeat) return;
-      this.emitTranscript({
-        text: String(s.text ?? ""),
-        isFinal: Boolean(s.sentence_end),
-        raw: msg,
-      });
+      const isFinal = Boolean(s.sentence_end);
+      // 同一句的 partial 与 final 共用一个 id 与 index：句内首条 partial 开新句，
+      // final 后重置，下一句重新计数。index 为 1-based 句序号。
+      if (isFinal) {
+        const id = this.currentSentenceId ?? this.beginSentence();
+        this.emitTranscript({
+          text: String(s.text ?? ""),
+          isFinal: true,
+          id,
+          index: this.currentSentenceIndex,
+          raw: msg,
+        });
+        this.currentSentenceId = null;
+      } else {
+        if (!this.currentSentenceId) this.currentSentenceId = this.beginSentence();
+        this.emitTranscript({
+          text: String(s.text ?? ""),
+          isFinal: false,
+          id: this.currentSentenceId,
+          index: this.currentSentenceIndex,
+          raw: msg,
+        });
+      }
       return;
     }
     if (event === "task-finished") {
@@ -122,8 +142,19 @@ export class DashScopeRealtimeASRClient extends BaseRealtimeASRClient {
       return;
     }
     if (event === "task-failed") {
-      this.emit("error", new ASRProtocolError(String(msg?.header?.error_message ?? "task failed")));
+      this.handleTaskFailed(msg);
     }
+  }
+
+  /** 开新句：递增句序号，返回稳定 id，并记下当前 index（1-based）。 */
+  private beginSentence(): string {
+    this.sentenceSeq += 1;
+    this.currentSentenceIndex = this.sentenceSeq;
+    return `s${this.sentenceSeq}`;
+  }
+
+  private handleTaskFailed(msg: any): void {
+    this.emit("error", new ASRProtocolError(String(msg?.header?.error_message ?? "task failed")));
   }
 
   protected sendAudioImpl(pcm: Uint8Array): void {

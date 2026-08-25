@@ -1,7 +1,16 @@
 {
   "name": "unified-realtime-asr",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Unified, provider-agnostic realtime speech-to-text (ASR) client for Chinese cloud + OpenAI-Realtime-style vendors. One API, many backends.",
+  "homepage": "https://github.com/zythum/unified-realtime-asr#readme",
+  "bugs": {
+    "url": "https://github.com/zythum/unified-realtime-asr/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zythum/unified-realtime-asr.git"
+  },
   "files": [
     "dist"
   ],
@@ -10,7 +19,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "dev": "tsx examples/basic.ts",
+    "example:node-basic": "tsx examples/node/basic.ts",
+    "example:web": "tsx examples/web/server.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint",
     "format": "oxfmt",
@@ -33,14 +43,5 @@
   },
   "engines": {
     "node": ">=18"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/zythum/unified-realtime-asr.git"
-  },
-  "bugs": {
-    "url": "https://github.com/zythum/unified-realtime-asr/issues"
-  },
-  "homepage": "https://github.com/zythum/unified-realtime-asr#readme",
-  "license": "MIT"
+  }
 }

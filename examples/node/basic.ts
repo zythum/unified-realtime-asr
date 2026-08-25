@@ -2,29 +2,29 @@ import { readFileSync } from "node:fs";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
-import { createASRClient, type ASRConfig } from "../src/index.js";
-import { stripWavHeader } from "../src/utils/wav.js";
+import { createASRClient, type ASRConfig } from "../../src/index.js";
+import { stripWavHeader } from "../../src/utils/wav.js";
 
 // 用 dotenv 加载仓库根的 .env.local（gitignored），避免密钥入库；已存在的环境变量优先。
-dotenv.config({ path: fileURLToPath(new URL("../.env.local", import.meta.url)) });
+dotenv.config({ path: fileURLToPath(new URL("../../.env.local", import.meta.url)) });
 
 /**
  * Usage demo. Without credentials it just prints the configured client and
  * exits — set env vars to actually stream.
  *
- *   ASR_PROVIDER=dashscope DASHSCOPE_API_KEY=sk-xxx npm run dev
- *   ASR_PROVIDER=openai-realtime OPENAI_API_KEY=sk-xxx npm run dev
+ *   ASR_PROVIDER=dashscope DASHSCOPE_API_KEY=sk-xxx npm run example:node-basic
+ *   ASR_PROVIDER=openai OPENAI_API_KEY=sk-xxx npm run example:node-basic
  *
  * Feed a PCM (16k mono) or WAV file via ASR_PCM_FILE to stream it through:
- *   ASR_PCM_FILE=fixtures/sample-voice.pcm ... npm run dev
- *   ASR_PCM_FILE=fixtures/sample-voice.wav ... npm run dev   # header auto-stripped
+ *   ASR_PCM_FILE=fixtures/sample-voice.pcm ... npm run example:node-basic
+ *   ASR_PCM_FILE=fixtures/sample-voice.wav ... npm run example:node-basic   # header auto-stripped
  */
 
 async function main(): Promise<void> {
   const provider = process.env.ASR_PROVIDER;
   if (!provider) {
     console.log("No ASR_PROVIDER set. Set one of:");
-    console.log("openai-realtime, dashscope, volcengine, plus credentials.");
+    console.log("openai, dashscope, volcengine, plus credentials.");
     console.log("Optionally set ASR_PCM_FILE=/path/to/16k-mono.pcm to stream a file.");
     return;
   }
@@ -32,21 +32,16 @@ async function main(): Promise<void> {
   const config = buildConfig(provider);
   const client = createASRClient(config);
 
-  // 调用方自行维护「当前识别文本」与「是否收到显式 final」，以便在不依赖
-  // 适配器内部收尾逻辑的前提下，于排空后补打 final。
-  let lastPartial = "";
-  let lastPartialAt = 0;
-  let gotFinal = false;
+  // 调用方自行维护最近一次识别结果时间，用于在停止推流后等待服务端排空。
+  let lastTranscriptAt = 0;
 
   client.on("open", () => console.log(`[${client.provider}] connected`));
   // 单一 transcript 事件，用 t.isFinal 分流中间稿 / 定稿。
   client.on("transcript", (t) => {
+    lastTranscriptAt = Date.now();
     if (t.isFinal) {
-      gotFinal = true;
       console.log(`\n(final)   ${t.text}`);
     } else {
-      lastPartial = t.text;
-      lastPartialAt = Date.now();
       process.stdout.write(`\r(partial) ${t.text}`);
     }
   });
@@ -71,13 +66,12 @@ async function main(): Promise<void> {
       await sleep(20);
     }
 
-    // 排空补偿（编排在调用方，而非适配器内）：客户端已停止喂音频，但服务端最终
-    // 结果相对关闭存在滞后，需保持连接打开等残余结果到达，再补打 final 并关闭。
+    // 等最后一条 transcript 后保持静默，不能在第一条 final 到达时提前关闭，
+    // 否则多句音频的后续结果可能被截断。尾句 final 由适配器或 provider 收尾处理。
     await drainWait(
-      () => gotFinal,
-      () => Date.now() - lastPartialAt >= 800,
+      () => false,
+      () => lastTranscriptAt > 0 && Date.now() - lastTranscriptAt >= 800,
     );
-    if (!gotFinal && lastPartial) console.log(`\n(final)   ${lastPartial}`);
   } else {
     console.log("Connected. Call client.sendAudio(<pcm>) from your microphone capture.");
     // keep the process alive a bit so you can pipe audio in
@@ -111,8 +105,8 @@ function sleep(ms: number): Promise<void> {
 
 function buildConfig(provider: string): ASRConfig {
   switch (provider) {
-    case "openai-realtime":
-      return { provider: "openai-realtime", apiKey: process.env.OPENAI_API_KEY! };
+    case "openai":
+      return { provider: "openai", apiKey: process.env.OPENAI_API_KEY! };
     case "dashscope":
       return {
         provider: "dashscope",
