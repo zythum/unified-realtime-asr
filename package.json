@@ -33,5 +33,14 @@
   },
   "engines": {
     "node": ">=18"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zythum/unified-realtime-asr.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zythum/unified-realtime-asr/issues"
+  },
+  "homepage": "https://github.com/zythum/unified-realtime-asr#readme",
+  "license": "MIT"
 }
