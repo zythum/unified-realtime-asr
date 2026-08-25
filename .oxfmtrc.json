@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 100,
+  "tabWidth": 2,
+  "useTabs": false,
+  "semi": true,
+  "singleQuote": false,
+  "trailingComma": "all",
+  "arrowParens": "always",
+  "bracketSpacing": true,
+  "insertFinalNewline": true,
+  "endOfLine": "lf",
+  "ignorePatterns": ["dist", "node_modules", "coverage", "package-lock.json", "examples/.env.local"]
+}

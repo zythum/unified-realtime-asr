@@ -1,0 +1,37 @@
+{
+  "name": "unified-realtime-asr",
+  "version": "0.1.0",
+  "description": "Unified, provider-agnostic realtime speech-to-text (ASR) client for Chinese cloud + OpenAI-Realtime-style vendors. One API, many backends.",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx examples/basic.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "gen:voice": "tsx scripts/gen-sample-voice.ts",
+    "strip:wav": "tsx scripts/strip-wav.ts",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.12",
+    "dotenv": "^17.4.2",
+    "oxfmt": "^0.64.0",
+    "oxlint": "^1.79.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
