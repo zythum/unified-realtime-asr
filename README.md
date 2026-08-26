@@ -1,5 +1,7 @@
 # unified-realtime-asr
 
+[![npm version](https://img.shields.io/npm/v/unified-realtime-asr.svg?style=flat-square&logo=npm&label=npm%20install%20unified-realtime-asr)](https://www.npmjs.com/package/unified-realtime-asr)
+
 统一、provider 无关的实时语音识别（ASR）客户端：一个 API，多个后端。
 
 面向中文云厂商（阿里百炼 / DashScope、火山引擎 / Volcengine）与 OpenAI-Realtime 风格的实时听写接口。把各家不同的私有协议、WebSocket 帧格式、事件模型全部隐藏在适配器后面，调用方只看到一套统一的接口。
