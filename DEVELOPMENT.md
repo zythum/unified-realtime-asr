@@ -155,6 +155,7 @@ fixtures/                    # 示例音频
 - **DashScope**：实时流使用裸 PCM WebSocket 帧；默认模型为 `fun-asr-flash-8k-realtime`。同一句从首条 partial 开始使用 `s1`、`s2` … ID，final 到达后切换到下一句。
 - **OpenAI-Realtime**：partial 使用 `delta`，final 使用 `completed`；服务端的 `item_id` 可直接作为结果 ID。
 - **Volcengine**：使用私有二进制帧协议；`utterances` 中的活体句用于 partial，带 `definite` 的句子用于 final。说话人标签依赖服务端返回，且表示当前累积片段中最近的说话人，不是逐词标签。
+- **IFlytek**：大模型版使用 URL 签名鉴权（HMAC-SHA1），握手后发送裸 PCM binary；结果在 `data.cn.st.rt[].ws[].cw[].w` 拼接，`type="0"` 为 final、`type="1"` 为 partial，`seg_id` 为句序号。支持 `role_type=2` 开启角色分离。
 - 不同 provider 对语言、VAD、标点、音频格式和说话人分离的支持并不完全一致。公共 `RealtimeASROptions` 只表达统一能力，provider 不支持的选项应安全忽略或在适配器内做兼容处理。
 
 ## 修改适配器时的检查清单

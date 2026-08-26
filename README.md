@@ -58,11 +58,12 @@ await client.close();
 
 ## 支持的后端
 
-| `provider`   | 服务                                                      | 协议                           |
-| ------------ | --------------------------------------------------------- | ------------------------------ |
-| `volcengine` | 火山引擎 豆包流式语音识别（2.0 小时版默认）               | 私有二进制帧协议               |
-| `dashscope`  | 阿里百炼 / 通义 Fun-ASR（默认 fun-asr-flash-8k-realtime） | 私有 WebSocket（裸 PCM 帧）    |
-| `openai`     | OpenAI Realtime transcription_sessions                    | OpenAI-Realtime（base64 JSON） |
+| `provider`   | 服务                                                      | 协议                           | 文档                                                                                 |
+| ------------ | --------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------ |
+| `volcengine` | 火山引擎 豆包流式语音识别（2.0 小时版默认）               | 私有二进制帧协议               | [接口文档](https://docs.volcengine.com/docs/6561/1354869?lang=zh)                    |
+| `dashscope`  | 阿里百炼 / 通义 Fun-ASR（默认 fun-asr-flash-8k-realtime） | 私有 WebSocket（裸 PCM 帧）    | [接口文档](https://platform.qianwenai.com/docs/developer-guides/speech/asr-realtime) |
+| `openai`     | OpenAI Realtime transcription_sessions                    | OpenAI-Realtime（base64 JSON） | [接口文档](https://platform.openai.com/docs/guides/realtime-transcription)           |
+| `iflytek`    | 科大讯飞实时语音转写大模型版                              | WebSocket + URL 签名鉴权       | [接口文档](https://www.xfyun.cn/doc/spark/asr_llm/rtasr_llm.html)                    |
 
 ### 配置
 
@@ -91,6 +92,14 @@ createASRClient({
   provider: "openai",
   apiKey: "sk-...",
   options: { transcriptionModel: "gpt-4o-transcribe" }, // 可选
+});
+
+// 科大讯飞（实时语音转写大模型版）
+createASRClient({
+  provider: "iflytek",
+  appId: "...", // 讯飞开放平台应用 ID
+  apiKey: "...", // accessKeyId
+  apiSecret: "...", // accessKeySecret
 });
 ```
 
@@ -186,6 +195,6 @@ interface ASREvents {
 }
 ```
 
-主要导出：`createASRClient`（默认导出同名）、`RealtimeASRClient`、`ASRConfig`、各适配器类（`OpenAIASRClient` / `DashScopeRealtimeASRClient` / `VolcengineASRClient`）、错误类型（`ASRError` / `ASRConnectionError` / `ASRAuthError` / `ASRProtocolError`）。
+主要导出：`createASRClient`（默认导出同名）、`RealtimeASRClient`、`ASRConfig`、各适配器类（`OpenAIASRClient` / `DashScopeASRClient` / `VolcengineASRClient` / `IFlytekASRClient`）、错误类型（`ASRError` / `ASRConnectionError` / `ASRAuthError` / `ASRProtocolError`）。
 
 开发方式、项目脚本和实现说明见 [DEVELOPMENT.md](./DEVELOPMENT.md)。

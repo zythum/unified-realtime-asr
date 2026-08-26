@@ -1,7 +1,22 @@
 {
   "name": "unified-realtime-asr",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Unified, provider-agnostic realtime speech-to-text (ASR) client for Chinese cloud + OpenAI-Realtime-style vendors. One API, many backends.",
+  "keywords": [
+    "asr",
+    "chinese",
+    "dashscope",
+    "iflytek",
+    "openai",
+    "realtime",
+    "speech-to-text",
+    "streaming",
+    "transcription",
+    "voice-recognition",
+    "volcengine",
+    "websocket",
+    "xfyun"
+  ],
   "homepage": "https://github.com/zythum/unified-realtime-asr#readme",
   "bugs": {
     "url": "https://github.com/zythum/unified-realtime-asr/issues"

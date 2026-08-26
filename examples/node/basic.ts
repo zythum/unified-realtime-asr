@@ -120,6 +120,13 @@ function buildConfig(provider: string): ASRConfig {
         apiKey: process.env.VOLC_API_KEY!,
         resourceId: process.env.VOLC_RESOURCE_ID,
       };
+    case "iflytek":
+      return {
+        provider: "iflytek",
+        appId: process.env.IFLYTEK_APP_ID!,
+        apiKey: process.env.IFLYTEK_API_KEY!,
+        apiSecret: process.env.IFLYTEK_API_SECRET!,
+      };
     default:
       throw new Error(`Unknown provider: ${provider}`);
   }

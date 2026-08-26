@@ -7,6 +7,7 @@ test("factory creates each supported provider", () => {
     { provider: "openai", apiKey: "test-key" },
     { provider: "dashscope", apiKey: "test-key" },
     { provider: "volcengine", apiKey: "test-key" },
+    { provider: "iflytek", appId: "test-app", apiKey: "test-key", apiSecret: "test-secret" },
   ] as const;
 
   for (const config of configs) {

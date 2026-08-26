@@ -122,4 +122,18 @@ export interface DashScopeConfig {
   options?: RealtimeASROptions;
 }
 
-export type ASRConfig = VolcengineConfig | OpenAIConfig | DashScopeConfig;
+/** 科大讯飞实时语音转写大模型版（RTASR LLM）。 */
+export interface IFlytekConfig {
+  provider: "iflytek";
+  /** 讯飞开放平台应用 ID（appId）。 */
+  appId: string;
+  /** 接口密钥（accessKeyId / APIKey）。 */
+  apiKey: string;
+  /** 接口密钥（accessKeySecret / APISecret），用于签名。 */
+  apiSecret: string;
+  /** 覆盖默认 WebSocket 端点。 */
+  url?: string;
+  options?: RealtimeASROptions;
+}
+
+export type ASRConfig = VolcengineConfig | OpenAIConfig | DashScopeConfig | IFlytekConfig;

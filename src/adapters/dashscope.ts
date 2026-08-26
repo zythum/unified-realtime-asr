@@ -11,7 +11,7 @@ import type { DashScopeConfig } from "../types.js";
  * 且必须等 task-started 才能推音频。因此不继承 OpenAIASRClient，而是基于
  * BaseRealtimeASRClient 独立实现（与 Volcengine 的「独立私有协议」取向一致）。
  */
-export class DashScopeRealtimeASRClient extends BaseRealtimeASRClient {
+export class DashScopeASRClient extends BaseRealtimeASRClient {
   private ws?: WebSocket;
   private taskId = "";
   private started = false;
