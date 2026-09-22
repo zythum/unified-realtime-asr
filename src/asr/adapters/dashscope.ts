@@ -1,8 +1,8 @@
 import WebSocket from "ws";
 import { randomUUID } from "node:crypto";
-import { BaseRealtimeASRClient } from "../core/base-client.js";
-import { ASRError, ASRProtocolError } from "../core/errors.js";
-import type { DashScopeConfig } from "../types.js";
+import { BaseRealtimeASRClient } from "../realtime-asr-client.js";
+import { ASRError, ASRProtocolError } from "../../core/errors.js";
+import type { DashScopeASRConfig } from "../types.js";
 
 /**
  * 阿里百炼 / DashScope（千问 Fun-ASR / Qwen-ASR）。
@@ -26,7 +26,7 @@ export class DashScopeASRClient extends BaseRealtimeASRClient {
   private url: string;
   private headers: Record<string, string>;
 
-  constructor(config: DashScopeConfig) {
+  constructor(config: DashScopeASRConfig) {
     const options = {
       ...config.options,
       transcriptionModel: config.model ?? config.options?.transcriptionModel,
@@ -85,7 +85,7 @@ export class DashScopeASRClient extends BaseRealtimeASRClient {
         task: "asr",
         function: "recognition",
         // 默认模型为 fun-asr-flash-8k-realtime；model 也可经 options.transcriptionModel
-        // 或 DashScopeConfig.model 覆盖。空串/空白视为未设置，回落到默认。
+        // 或 DashScopeASRConfig.model 覆盖。空串/空白视为未设置，回落到默认。
         model:
           (opts.transcriptionModel && opts.transcriptionModel.trim()) ||
           "fun-asr-flash-8k-realtime",

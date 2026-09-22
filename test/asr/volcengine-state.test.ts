@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { VolcengineASRClient } from "../src/adapters/volcengine.js";
-import type { Transcript } from "../src/types.js";
+import { VolcengineASRClient } from "../../src/asr/adapters/volcengine.js";
+import type { Transcript } from "../../src/asr/types.js";
 
 function createProbe() {
   const client = new VolcengineASRClient({ provider: "volcengine", apiKey: "test-key" });

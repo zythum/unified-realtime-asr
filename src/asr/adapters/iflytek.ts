@@ -1,9 +1,9 @@
 import WebSocket from "ws";
 import { createHmac } from "node:crypto";
 import { randomUUID } from "node:crypto";
-import { BaseRealtimeASRClient } from "../core/base-client.js";
-import { ASRError, ASRConnectionError, ASRProtocolError } from "../core/errors.js";
-import type { IFlytekConfig } from "../types.js";
+import { BaseRealtimeASRClient } from "../realtime-asr-client.js";
+import { ASRError, ASRConnectionError, ASRProtocolError } from "../../core/errors.js";
+import type { IFlytekASRConfig } from "../types.js";
 
 const DEFAULT_URL = "wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1";
 
@@ -34,7 +34,7 @@ export class IFlytekASRClient extends BaseRealtimeASRClient {
   private currentSegmentIndex = 0;
   private segmentSeq = 0;
 
-  constructor(config: IFlytekConfig) {
+  constructor(config: IFlytekASRConfig) {
     super(config.options);
     this.appId = config.appId;
     this.accessKeyId = config.apiKey;
@@ -203,7 +203,7 @@ export class IFlytekASRClient extends BaseRealtimeASRClient {
     if (action === "started") {
       const code = String(message?.code ?? "0");
       if (code !== "0") {
-        this.emitError(message);
+        this.emitVendorError(message);
         return;
       }
       this.started = true;
@@ -213,7 +213,7 @@ export class IFlytekASRClient extends BaseRealtimeASRClient {
 
     // 错误处理
     if (action === "error") {
-      this.emitError(message);
+      this.emitVendorError(message);
       return;
     }
 
@@ -239,7 +239,7 @@ export class IFlytekASRClient extends BaseRealtimeASRClient {
 
     // 大模型版功能异常
     if (msgType === "result" && resType === "frc") {
-      this.emitError(message?.data);
+      this.emitVendorError(message?.data);
       return;
     }
   }
@@ -290,7 +290,8 @@ export class IFlytekASRClient extends BaseRealtimeASRClient {
     this.audioBuffer = [];
   }
 
-  private emitError(message: any): void {
+  /** 把厂商错误载荷格式化为统一协议错误后上报（区别于基类的 emitError）。 */
+  private emitVendorError(message: any): void {
     const parts: string[] = [];
     if (message?.code) parts.push(String(message.code));
     if (message?.desc) parts.push(message.desc);

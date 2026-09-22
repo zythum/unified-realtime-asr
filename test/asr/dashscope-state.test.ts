@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DashScopeASRClient } from "../src/adapters/dashscope.js";
-import type { Transcript } from "../src/types.js";
+import { DashScopeASRClient } from "../../src/asr/adapters/dashscope.js";
+import type { Transcript } from "../../src/asr/types.js";
 
 test("DashScope keeps sentence id/index across partial and final", () => {
   const client = new DashScopeASRClient({

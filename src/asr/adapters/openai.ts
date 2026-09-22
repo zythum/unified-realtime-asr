@@ -1,8 +1,8 @@
 import WebSocket from "ws";
 import { randomUUID } from "node:crypto";
-import { BaseRealtimeASRClient } from "../core/base-client.js";
-import { ASRError, ASRProtocolError } from "../core/errors.js";
-import type { OpenAIConfig, RealtimeASROptions } from "../types.js";
+import { BaseRealtimeASRClient } from "../realtime-asr-client.js";
+import { ASRError, ASRProtocolError } from "../../core/errors.js";
+import type { OpenAIASRConfig, RealtimeASROptions } from "../types.js";
 
 export type RealtimeMessage =
   | { kind: "ignore" }
@@ -44,7 +44,7 @@ export class OpenAIASRClient extends BaseRealtimeASRClient {
   private itemIndex = new Map<string, number>();
   private itemSeq = 0;
 
-  constructor(config: OpenAIConfig) {
+  constructor(config: OpenAIASRConfig) {
     super(config.options);
     this.apiKey = config.apiKey;
     this.url = config.url ?? this.url;

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { IFlytekASRClient, buildIFlytekAuthUrl } from "../src/adapters/iflytek.js";
-import type { Transcript } from "../src/types.js";
+import { IFlytekASRClient, buildIFlytekAuthUrl } from "../../src/asr/adapters/iflytek.js";
+import type { Transcript } from "../../src/asr/types.js";
 
 test("IFlytek LLM auth URL has correct signature structure", () => {
   const url = buildIFlytekAuthUrl(

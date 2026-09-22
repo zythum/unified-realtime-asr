@@ -111,14 +111,14 @@ function buildConfig(provider: string): ASRConfig {
       return {
         provider: "dashscope",
         apiKey: process.env.DASHSCOPE_API_KEY!,
-        model: process.env.DASHSCOPE_MODEL,
+        model: process.env.DASHSCOPE_ASR_MODEL,
         workspaceId: process.env.DASHSCOPE_WORKSPACE_ID,
       };
     case "volcengine":
       return {
         provider: "volcengine",
         apiKey: process.env.VOLC_API_KEY!,
-        resourceId: process.env.VOLC_RESOURCE_ID,
+        resourceId: process.env.VOLC_ASR_RESOURCE_ID,
       };
     case "iflytek":
       return {

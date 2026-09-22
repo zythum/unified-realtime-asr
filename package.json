@@ -1,7 +1,7 @@
 {
   "name": "unified-realtime-asr",
-  "version": "0.2.1",
-  "description": "Unified, provider-agnostic realtime speech-to-text (ASR) client for Chinese cloud + OpenAI-Realtime-style vendors. One API, many backends.",
+  "version": "0.3.0",
+  "description": "Unified, provider-agnostic realtime speech client (ASR + TTS) for Chinese cloud + OpenAI-style vendors. One API, many backends.",
   "keywords": [
     "asr",
     "chinese",
@@ -9,9 +9,12 @@
     "iflytek",
     "openai",
     "realtime",
+    "speech-synthesis",
     "speech-to-text",
     "streaming",
+    "text-to-speech",
     "transcription",
+    "tts",
     "voice-recognition",
     "volcengine",
     "websocket",
@@ -33,7 +36,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "clean": "tsx scripts/clean-dist.ts",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
     "example:node-basic": "tsx examples/node/basic.ts",
     "example:web": "tsx examples/web/server.ts",
     "typecheck": "tsc --noEmit",
@@ -42,7 +46,7 @@
     "format:check": "oxfmt --check",
     "gen:voice": "tsx scripts/gen-sample-voice.ts",
     "strip:wav": "tsx scripts/strip-wav.ts",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*/*.test.ts"
   },
   "dependencies": {
     "ws": "^8.18.0"

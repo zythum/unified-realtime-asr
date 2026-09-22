@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { OpenAIASRClient } from "../src/adapters/openai.js";
+import { OpenAIASRClient } from "../../src/asr/adapters/openai.js";
 
 test("OpenAI maps item_id to a stable id and independent index", () => {
   const client = new OpenAIASRClient({ provider: "openai", apiKey: "test-key" });

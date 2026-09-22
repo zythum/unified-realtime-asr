@@ -1,13 +1,14 @@
 /**
- * Unified, provider-agnostic types for realtime speech-to-text.
+ * 实时识别（ASR）方向的公共类型：统一结果形状 + 各 provider 配置。
  *
- * The whole point of this package is that user code only ever sees these
- * shapes; vendor-specific protocols are hidden behind adapters.
+ * 与 `tts/types.ts` 镜像。两侧共用的只有 `core/types.ts` 里的连接层选项；
+ * 用户代码永远只接触这里的形状，厂商协议细节藏在 `asr/adapters/` 后面。
  */
 
-import type { ASRError } from "./core/errors.js";
+import type { ASRError } from "../core/errors.js";
+import type { CloseInfo, RealtimeSessionOptions } from "../core/types.js";
 
-export type AudioFormat = "pcm" | "opus" | "g711a" | "g711u" | "wav";
+export type ASRAudioFormat = "pcm" | "opus" | "g711a" | "g711u" | "wav";
 
 /** A single recognition result. `isFinal=false` => interim (partial). */
 export interface Transcript {
@@ -31,7 +32,7 @@ export interface Transcript {
   raw?: unknown;
 }
 
-export interface RealtimeASROptions {
+export interface RealtimeASROptions extends RealtimeSessionOptions {
   /** BCP-47 language, e.g. 'zh-CN', 'en-US', or 'auto'. Default 'zh-CN'. */
   language?: string;
   /** Sample rate in Hz the caller will feed. Default 16000. */
@@ -39,7 +40,7 @@ export interface RealtimeASROptions {
   /** Channels. ASR is almost always mono(1). Default 1. */
   channels?: number;
   /** Audio encoding of the *input* the caller provides. Default 'pcm'. */
-  format?: AudioFormat;
+  format?: ASRAudioFormat;
   /** Request interim (partial) results. Default true. */
   interimResults?: boolean;
   /** Enable automatic punctuation. Default true. */
@@ -57,15 +58,9 @@ export interface RealtimeASROptions {
   speakerDiarization?: boolean;
   /** Model id for the transcription (OpenAI-Realtime style providers). */
   transcriptionModel?: string;
-  /** Auto-reconnect on abnormal close. Default false. */
-  autoReconnect?: boolean;
-  /** Max reconnect attempts when autoReconnect is on. Default 5. */
-  maxReconnectAttempts?: number;
-  /** Vendor-specific passthrough. */
-  extra?: Record<string, unknown>;
 }
 
-/** Events emitted by every client. */
+/** Events emitted by every ASR client. */
 export interface ASREvents {
   /** Underlying WebSocket connection established. */
   open: () => void;
@@ -79,14 +74,14 @@ export interface ASREvents {
   /** Recoverable error (stream continues unless it's fatal). */
   error: (err: ASRError) => void;
   /** Connection closed. */
-  close: (info?: { code?: number; reason?: string }) => void;
+  close: (info?: CloseInfo) => void;
 }
 
 /* -------------------------------------------------------------------------- */
 /* Provider configs (discriminated union on `provider`)                       */
 /* -------------------------------------------------------------------------- */
 
-export interface VolcengineConfig {
+export interface VolcengineASRConfig {
   provider: "volcengine";
   /** 新版控制台 API Key，作为 X-Api-Key。 */
   apiKey: string;
@@ -98,7 +93,7 @@ export interface VolcengineConfig {
   options?: RealtimeASROptions;
 }
 
-export interface OpenAIConfig {
+export interface OpenAIASRConfig {
   provider: "openai";
   apiKey: string;
   url?: string;
@@ -106,7 +101,7 @@ export interface OpenAIConfig {
 }
 
 /** 阿里云百炼 / DashScope 实时语音识别（千问 Fun-ASR / Qwen-ASR）。 */
-export interface DashScopeConfig {
+export interface DashScopeASRConfig {
   provider: "dashscope";
   /** DashScope API Key（sk-...），与调用千问大模型同一把。 */
   apiKey: string;
@@ -123,7 +118,7 @@ export interface DashScopeConfig {
 }
 
 /** 科大讯飞实时语音转写大模型版（RTASR LLM）。 */
-export interface IFlytekConfig {
+export interface IFlytekASRConfig {
   provider: "iflytek";
   /** 讯飞开放平台应用 ID（appId）。 */
   appId: string;
@@ -136,4 +131,8 @@ export interface IFlytekConfig {
   options?: RealtimeASROptions;
 }
 
-export type ASRConfig = VolcengineConfig | OpenAIConfig | DashScopeConfig | IFlytekConfig;
+export type ASRConfig =
+  | VolcengineASRConfig
+  | OpenAIASRConfig
+  | DashScopeASRConfig
+  | IFlytekASRConfig;

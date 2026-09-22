@@ -1,122 +1,30 @@
 import WebSocket from "ws";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { randomUUID } from "node:crypto";
-import { BaseRealtimeASRClient } from "../core/base-client.js";
-import { ASRError, ASRConnectionError, ASRProtocolError } from "../core/errors.js";
-import type { VolcengineConfig } from "../types.js";
+import { BaseRealtimeASRClient } from "../realtime-asr-client.js";
+import { ASRError, ASRConnectionError, ASRProtocolError } from "../../core/errors.js";
+import type { VolcengineASRConfig } from "../types.js";
+import {
+  MSG_AUDIO_ONLY_REQUEST,
+  MSG_AUDIO_ONLY_RESPONSE,
+  MSG_ERROR,
+  MSG_FULL_SERVER_RESPONSE,
+  SER_JSON,
+  SER_RAW,
+  COMP_GZIP,
+  decodeFrame,
+  encodeFrame,
+  toBuffer,
+  type VolcFrame,
+} from "../../utils/volc-frames.js";
+
 /**
- * 火山引擎双向流式语音识别 WebSocket 协议
+ * 火山引擎双向流式语音识别 WebSocket 协议（doc 2630027 / 1354869）。
  *
- * 参考文档：
- * - 双向流式语音识别：2630027
- * - 双向流式 TTS V3：1329505（共用同一套二进制帧格式）
- *
- * 本协议使用私有二进制帧和新版控制台的 X-Api-Key 鉴权，
- * 不使用旧版 NLS 的 HMAC token。
- *
- * 帧格式采用大端序：
- * - byte0：protocol_version（4bit）+ header_size（4bit）
- * - byte1：message_type（4bit）+ message_type_specific_flags（4bit）
- * - byte2：serialization（4bit）+ compression_method（4bit）
- * - byte3：保留字段
- * - 可选 event number：WITH_EVENT 标志位存在时，4 字节
- * - 可选 sequence number：WITH_SEQUENCE 标志位存在时，4 字节有符号整数
- * - payload size：4 字节无符号大端整数
- * - payload：gzip 压缩后的 JSON 或原始 PCM 数据
- *
- * serialization：0 = raw（音频），1 = JSON（文本）
- * compression：0 = 不压缩，1 = gzip
+ * 鉴权走新版控制台的 `X-Api-Key`，不使用旧版 NLS 的 HMAC token。
+ * 二进制帧的编解码在 `utils/volc-frames.ts`（与 TTS 方向共用同一套 envelope）——
+ * 本适配器只负责 ASR 特有的事：请求参数、按 utterances 分句、说话人标签。
  */
-
-const PROTOCOL_VERSION = 0b0001;
-const HEADER_SIZE = 0b0001; // 单位：4 字节
-
-const FULL_CLIENT_REQUEST = 0b0001; // 1  客户端初始化（full client request）
-const AUDIO_ONLY_REQUEST = 0b0010; // 2  客户端音频包
-const FULL_SERVER_RESPONSE = 0b1001; // 9  服务端文本/识别结果
-const AUDIO_ONLY_RESPONSE = 0b1011; // 11 服务端音频（ASR 不使用）
-const ERROR_INFO = 0b1111; // 15 错误帧
-
-// message_type_specific_flags（byte1 低 4 位）。
-// 正序 / 负序不靠不同 flag 区分，而是靠携带的 sequence 数值的符号：
-//   末包 = WITH_SEQUENCE 帧，但 sequence 取负值。
-const WITH_SEQUENCE = 0b0001; // 帧头后携带 4B sequence number
-const WITH_EVENT = 0b0010; // 帧头后携带 4B event number
-
-const SER_RAW = 0b0000;
-const SER_JSON = 0b0001;
-const COMP_GZIP = 0b0001;
-
-function buildHeader(
-  messageType: number,
-  flags: number,
-  serialization: number,
-  compression: number,
-): Buffer {
-  return Buffer.from([
-    (PROTOCOL_VERSION << 4) | HEADER_SIZE, // 0x11
-    (messageType << 4) | flags,
-    (serialization << 4) | compression,
-    0x00, // reserved
-  ]);
-}
-
-function frameWith(
-  payload: Buffer,
-  messageType: number,
-  flags: number,
-  serialization: number,
-  compression: number,
-  seq?: number,
-): Buffer {
-  const header = buildHeader(messageType, flags, serialization, compression);
-  const parts: Buffer[] = [header];
-  if (flags & WITH_SEQUENCE) {
-    const s = Buffer.alloc(4);
-    s.writeInt32BE(seq ?? 0, 0);
-    parts.push(s);
-  }
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(payload.length, 0);
-  parts.push(len, payload);
-  return Buffer.concat(parts);
-}
-
-interface DecodedFrame {
-  messageType: number;
-  flags: number;
-  serialization: number;
-  compression: number;
-  /** 仅当帧头带 WITH_SEQUENCE 标志位时存在（有符号 4B）。 */
-  sequence?: number;
-  payloadSize: number;
-  payload: Buffer;
-}
-
-function decodeFrame(buf: Buffer): DecodedFrame {
-  if (buf.length < 4) throw new Error("Volcengine frame too short");
-  let offset = 1; // byte0: protocol version + header size
-  const b1 = buf[offset++];
-  const messageType = (b1 >> 4) & 0x0f;
-  const flags = b1 & 0x0f;
-  const b2 = buf[offset++];
-  const serialization = (b2 >> 4) & 0x0f;
-  const compression = b2 & 0x0f;
-  offset += 1; // byte3: reserved
-
-  let sequence: number | undefined;
-  if (flags & WITH_SEQUENCE) {
-    sequence = buf.readInt32BE(offset);
-    offset += 4;
-  }
-  if (flags & WITH_EVENT) {
-    offset += 4; // event number, 本客户端用不到
-  }
-  const payloadSize = buf.readUInt32BE(offset);
-  offset += 4;
-  const payload = buf.subarray(offset, offset + payloadSize);
-  return { messageType, flags, serialization, compression, sequence, payloadSize, payload };
-}
 
 // 火山引擎「大模型流式语音识别」统一端点（doc 1354869）。
 // bigasr（1.0）与 seedasr（2.0）两种 resource-id 都走同一 WebSocket 地址，
@@ -147,7 +55,7 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
   /** 最近一次 partial 对应的「当前活体句」，用于在会话结束时补发一条 final（兜底）。 */
   private pendingFinal: { id: string; index: number; text: string; speaker?: string } | null = null;
 
-  constructor(config: VolcengineConfig) {
+  constructor(config: VolcengineASRConfig) {
     super(config.options);
     this.apiKey = config.apiKey;
     this.resourceId = config.resourceId ?? DEFAULT_RESOURCE_ID;
@@ -238,14 +146,21 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
     const json = Buffer.from(JSON.stringify(payload), "utf-8");
     const compressed = gzipSync(json);
     // 握手头 X-Api-Sequence:-1 表示服务端自动分配序号，客户端帧不携带 sequence。
-    return frameWith(compressed, FULL_CLIENT_REQUEST, 0, SER_JSON, COMP_GZIP);
+    return encodeFrame({ serialization: SER_JSON, compression: COMP_GZIP, payload: compressed });
   }
 
   protected sendAudioImpl(pcm: Uint8Array): void {
     const ws = this.ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const compressed = gzipSync(Buffer.from(pcm));
-    ws.send(frameWith(compressed, AUDIO_ONLY_REQUEST, 0, SER_RAW, COMP_GZIP));
+    ws.send(
+      encodeFrame({
+        messageType: MSG_AUDIO_ONLY_REQUEST,
+        serialization: SER_RAW,
+        compression: COMP_GZIP,
+        payload: compressed,
+      }),
+    );
   }
 
   // 适配器负责协议：连、推音频、按 utterances 分句转发结果（已完成分句发 final，
@@ -285,7 +200,7 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
   }
 
   private parseFrame(buf: Buffer): void {
-    let decoded: DecodedFrame;
+    let decoded: VolcFrame;
     try {
       decoded = decodeFrame(buf);
     } catch (err) {
@@ -294,7 +209,7 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
     }
     const { messageType, serialization, compression, payload } = decoded;
 
-    if (messageType === ERROR_INFO) {
+    if (messageType === MSG_ERROR) {
       let detail = "";
       try {
         const raw = compression === COMP_GZIP ? gunzipSync(payload) : payload;
@@ -305,7 +220,7 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
       this.emit("error", new ASRProtocolError(`火山引擎 ASR 错误帧: ${detail}`));
       return;
     }
-    if (messageType !== FULL_SERVER_RESPONSE && messageType !== AUDIO_ONLY_RESPONSE) return;
+    if (messageType !== MSG_FULL_SERVER_RESPONSE && messageType !== MSG_AUDIO_ONLY_RESPONSE) return;
     if (serialization !== SER_JSON) return; // 服务端音频帧在 ASR 场景不出现
 
     let body: any;
@@ -415,10 +330,4 @@ function resultSpeaker(result: any): string | undefined {
   if (typeof result.speaker === "string") return result.speaker;
   const sid = result?.additions?.speaker_id;
   return typeof sid === "string" ? sid : undefined;
-}
-
-function toBuffer(data: WebSocket.RawData): Buffer {
-  if (Buffer.isBuffer(data)) return data;
-  if (Array.isArray(data)) return Buffer.concat(data);
-  return Buffer.from(data as ArrayBuffer);
 }
