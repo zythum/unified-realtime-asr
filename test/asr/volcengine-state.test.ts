@@ -43,6 +43,40 @@ test("Volcengine carries speaker on partial and does not create a phantom senten
   );
 });
 
+test("Volcengine 丢弃重复回包：文本未变化时不重复发 partial，但尾句 final 仍补发", () => {
+  const { transcripts, handleResponse, flushPendingFinal } = createProbe();
+  // 服务端「每包音频回一包结果」，同一句会被重复下发；这里模拟 今天 x2 + 今天天气 x3。
+  const live = (text: string) => ({ result: { text, utterances: [{ text, definite: false }] } });
+
+  handleResponse(live("今天"));
+  handleResponse(live("今天"));
+  handleResponse(live("今天天气"));
+  handleResponse(live("今天天气"));
+  handleResponse(live("今天天气"));
+  flushPendingFinal();
+
+  assert.deepEqual(
+    transcripts.map(({ text, isFinal }) => ({ text, isFinal })),
+    [
+      { text: "今天", isFinal: false },
+      { text: "今天天气", isFinal: false },
+      { text: "今天天气", isFinal: true },
+    ],
+  );
+});
+
+test("Volcengine 默认走官方推荐的优化版链路，显式 url 仍可回退旧版", () => {
+  const byDefault = new VolcengineASRClient({ provider: "volcengine", apiKey: "test-key" });
+  assert.equal((byDefault as any).url, "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async");
+
+  const pinned = new VolcengineASRClient({
+    provider: "volcengine",
+    apiKey: "test-key",
+    url: "wss://example.test/api/v3/sauc/bigmodel",
+  });
+  assert.equal((pinned as any).url, "wss://example.test/api/v3/sauc/bigmodel");
+});
+
 test("Volcengine suppresses a late server final after fallback final", () => {
   const { transcripts, handleResponse, flushPendingFinal } = createProbe();
 

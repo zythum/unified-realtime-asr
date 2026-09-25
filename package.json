@@ -1,6 +1,6 @@
 {
   "name": "unified-realtime-asr",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Unified, provider-agnostic realtime speech client (ASR + TTS) for Chinese cloud + OpenAI-style vendors. One API, many backends.",
   "keywords": [
     "asr",

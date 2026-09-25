@@ -26,14 +26,21 @@ import {
  * 本适配器只负责 ASR 特有的事：请求参数、按 utterances 分句、说话人标签。
  */
 
-// 火山引擎「大模型流式语音识别」统一端点（doc 1354869）。
-// bigasr（1.0）与 seedasr（2.0）两种 resource-id 都走同一 WebSocket 地址，
-// 仅靠 X-Api-Resource-Id 头区分；旧的 /api/v3/asr 路径已废弃。
-const BIGASR_URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel";
+/**
+ * 火山引擎「大模型流式语音识别」的三条链路（doc 1354869）共用同一套二进制协议，
+ * 只有 URL 与服务端返包时机不同；bigasr（1.0）/ seedasr（2.0）另靠 X-Api-Resource-Id 头区分。
+ *
+ *   - `bigmodel`          双向流式（旧版）：每输入一包音频就回一包
+ *   - `bigmodel_async`    双向流式（优化版）：仅在结果变化时返包，官方推荐 ← 默认走这条
+ *   - `bigmodel_nostream` 流式输入 / 非流式结果：音频超过 15s 或收到最后一包才出结果
+ *
+ * 旧的 /api/v3/asr 路径已废弃。想回退旧版链或用 nostream，把完整 URL 传给 `url` 即可。
+ */
+const BIGMODEL_ASYNC_URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async";
 const DEFAULT_RESOURCE_ID = "volc.seedasr.sauc.duration"; // 豆包流式语音识别 2.0 小时版
 
 function resolveUrl(_resourceId: string, explicit?: string): string {
-  return explicit ?? BIGASR_URL;
+  return explicit ?? BIGMODEL_ASYNC_URL;
 }
 
 /**
@@ -52,6 +59,8 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
   private finalizedUtteranceIds = new Set<string>();
   /** 已作为 final 发出的最大分句序号（1-based），用于 fallback 分配序号。 */
   private emittedUtterances = 0;
+  /** 最近一次已发出的 partial（id + 文本），用于丢弃服务端「一包一返」造成的重复回包。 */
+  private lastPartial: { id: string; text: string } | null = null;
   /** 最近一次 partial 对应的「当前活体句」，用于在会话结束时补发一条 final（兜底）。 */
   private pendingFinal: { id: string; index: number; text: string; speaker?: string } | null = null;
 
@@ -80,6 +89,7 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
     this.ws = new WebSocket(this.url, { headers });
     this.finalizedUtteranceIds.clear(); // 新会话，分句 final 去重状态归零
     this.emittedUtterances = 0; // 新会话，分句计数归零
+    this.lastPartial = null; // 新会话，partial 去重状态归零
     this.pendingFinal = null; // 新会话，清掉上一会话遗留的尾句兜底
 
     await new Promise<void>((resolve, reject) => {
@@ -129,6 +139,8 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
       show_utterances: true, // 必须：utterances[] 含当前活体句与已定稿句（definite 标记），用于分句
       result_type: "full", // 该端点下 result.text 即「当前句」活体文本，直接作为 partial；定稿句由 utterances 的 definite 标记识别
       // 说话人聚类分离：仅当 language 为空或 zh-CN（本适配器默认即如此）时可用。
+      // 注意：官方文档称优化版链路下 enable_speaker_info 需同时开 enable_nonstream=true（二遍识别），
+      // 而那会引入 VAD 判停与二遍语义变化，故这里不代为开启；需要时用 options.extra 显式传。
       ...(opts.speakerDiarization ? { enable_speaker_info: true, ssd_version: "200" } : {}),
       ...opts.extra,
     };
@@ -285,14 +297,20 @@ export class VolcengineASRClient extends BaseRealtimeASRClient {
       const index = liveIdx >= 0 ? liveIdx + 1 : this.emittedUtterances + 1;
       const id = `u${index}`;
       const speaker = liveIdx >= 0 ? utteranceSpeaker(utts[liveIdx]) : resultSpeaker(result);
-      this.emitTranscript({
-        text: partialText,
-        isFinal: false,
-        id,
-        index,
-        ...(speaker !== undefined ? { speaker } : {}),
-        raw: body,
-      });
+      // 服务端会为每一包音频回一包结果，同一句文本因此被重复下发几十次（旧版链路尤甚，
+      // 且音频推完后仍会持续重发）。只在文本真正变化时向上层发 transcript，
+      // 否则调用方会被大量无信息量的事件淹没（重复渲染 / 转发）。
+      if (this.lastPartial?.id !== id || this.lastPartial.text !== partialText) {
+        this.lastPartial = { id, text: partialText };
+        this.emitTranscript({
+          text: partialText,
+          isFinal: false,
+          id,
+          index,
+          ...(speaker !== undefined ? { speaker } : {}),
+          raw: body,
+        });
+      }
       // 记下当前活体句，便于会话结束时补发 final。
       this.pendingFinal = { id, index, text: partialText, ...(speaker ? { speaker } : {}) };
     }
